@@ -98,6 +98,23 @@ def _parse_console_scripts(entry_points: str) -> dict[str, str]:
     return scripts
 
 
+def _has_eager_numpy_import(source: str) -> bool:
+    """Report whether module-scope code imports numpy.
+
+    Module scope means column zero, or the 4-space indentation MLIR uses for
+    imports inside its module-level ``try:`` block. A deferred import lives
+    inside a builder body (8 spaces) and is not flagged.
+    """
+    for line in source.splitlines():
+        if not line.strip().startswith("import numpy"):
+            continue
+        if line.startswith("import numpy"):
+            return True
+        if line.startswith("    ") and not line.startswith("        "):
+            return True
+    return False
+
+
 def validate_wheel_payload(wheel: Path) -> None:
     with zipfile.ZipFile(wheel) as zf:
         names = set(zf.namelist())
@@ -156,6 +173,15 @@ def validate_wheel_payload(wheel: Path) -> None:
             raise SystemExit(
                 "wheel unexpectedly contains forbidden payload files: "
                 f"{present_forbidden}"
+            )
+
+        ir_source = zf.read("ptoas/mlir/ir.py").decode("utf-8")
+        if _has_eager_numpy_import(ir_source):
+            raise SystemExit(
+                "ptoas/mlir/ir.py imports numpy at module scope; every ptoas "
+                "invocation would pay ~85 ms of avoidable Python start-up. "
+                "Defer the import into the DenseElementsAttr builders (see "
+                "lib/Bindings/Python/defer_numpy_import.py)."
             )
 
         entry_points_names = sorted(

@@ -158,3 +158,23 @@ if(SKBUILD_STATE STREQUAL "editable")
     endif()
   endforeach()
 endif()
+
+# Upstream MLIR's Python `ir` module imports numpy at module scope only to
+# register the optional DenseElementsAttr builders, which puts ~85 ms of import
+# time on every `ptoas` invocation (the CLI is a short-lived process; one per
+# compiled kernel). Rewrite the file as it is installed so the builders stay
+# registered and numpy is imported on first use. The rewrite is idempotent and
+# the built wheel is checked again by docker/validate_wheel_payload.py.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+install(CODE "
+  message(STATUS \"Deferring numpy import in installed ptoas/mlir/ir.py\")
+  execute_process(
+    COMMAND \"${Python3_EXECUTABLE}\"
+            \"${CMAKE_CURRENT_SOURCE_DIR}/defer_numpy_import.py\"
+            \"\${CMAKE_INSTALL_PREFIX}/ptoas/mlir/ir.py\"
+    RESULT_VARIABLE _ptoas_defer_numpy_result)
+  if(NOT _ptoas_defer_numpy_result EQUAL 0)
+    message(FATAL_ERROR
+      \"defer_numpy_import.py failed with code \${_ptoas_defer_numpy_result}\")
+  endif()
+" COMPONENT PTOAS_Python)
